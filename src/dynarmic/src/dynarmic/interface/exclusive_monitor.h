@@ -22,6 +22,31 @@ namespace Dynarmic {
 using VAddr = std::uint64_t;
 using Vector = std::array<std::uint64_t, 2>;
 
+namespace detail {
+// Android's libc++ has no std::atomic_ref, so fall back to the compiler builtins there.
+#if defined(__cpp_lib_atomic_ref)
+inline VAddr AtomicLoadRelaxed(VAddr& v) {
+    return std::atomic_ref<VAddr>{v}.load(std::memory_order_relaxed);
+}
+inline void AtomicStoreRelease(VAddr& v, VAddr value) {
+    std::atomic_ref<VAddr>{v}.store(value, std::memory_order_release);
+}
+inline bool AtomicCompareExchange(VAddr& v, VAddr expected, VAddr desired) {
+    return std::atomic_ref<VAddr>{v}.compare_exchange_strong(expected, desired, std::memory_order_acq_rel);
+}
+#else
+inline VAddr AtomicLoadRelaxed(VAddr& v) {
+    return __atomic_load_n(&v, __ATOMIC_RELAXED);
+}
+inline void AtomicStoreRelease(VAddr& v, VAddr value) {
+    __atomic_store_n(&v, value, __ATOMIC_RELEASE);
+}
+inline bool AtomicCompareExchange(VAddr& v, VAddr expected, VAddr desired) {
+    return __atomic_compare_exchange_n(&v, &expected, desired, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+}
+#endif
+}  // namespace detail
+
 class ExclusiveMonitor {
 public:
     /// @param processor_count Maximum number of processors using this global
@@ -39,7 +64,7 @@ public:
         const VAddr masked_address = address & RESERVATION_GRANULE_MASK;
 
 #ifdef ARCHITECTURE_arm64
-        std::atomic_ref<VAddr>{exclusive_addresses[processor_id]}.store(masked_address, std::memory_order_release);
+        detail::AtomicStoreRelease(exclusive_addresses[processor_id], masked_address);
         const T value = op();
         std::memcpy(exclusive_values[processor_id].data(), &value, sizeof(T));
 #else
