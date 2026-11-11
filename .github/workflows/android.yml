@@ -1,0 +1,80 @@
+name: android
+
+on:
+  workflow_dispatch:
+    inputs:
+      flavor:
+        description: Build flavor
+        type: choice
+        options: [standard, optimized, legacy]
+        default: standard
+  push:
+    branches:
+      - nx2
+    paths:
+      - "src/**"
+      - "!src/tests/**"
+      - "CMakeLists.txt"
+      - "CMakeModules/**"
+      - "externals/**"
+      - ".patch/**"
+      - "cpmfile.json"
+      - ".ci/android/**"
+      - ".github/workflows/android.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Android APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build glslang-tools ccache
+
+      - name: Install NDK and CMake
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "ndk;28.2.13676358" "cmake;3.31.5" "platforms;android-36"
+
+      - name: Cache CCache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: android-ccache-${{ github.sha }}
+          restore-keys: android-ccache-
+
+      - name: Build
+        env:
+          CCACHE: "true"
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: |
+          chmod +x .ci/android/build.sh
+          .ci/android/build.sh -t "${{ inputs.flavor || 'standard' }}" -b Release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lichii-android-${{ inputs.flavor || 'standard' }}-${{ github.run_number }}
+          path: artifacts/*.apk
+          if-no-files-found: error
