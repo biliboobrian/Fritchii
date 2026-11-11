@@ -11,6 +11,7 @@ on:
   push:
     branches:
       - nx2
+      - android-ci
     paths:
       - "src/**"
       - "!src/tests/**"
